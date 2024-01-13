@@ -42,6 +42,8 @@ io.on("connection", (socket) => {
       socket.emit("notSignedIn");
       return;
     }
+
+    // Enter the user's room
     socket.join(roomId);
     socket.roomId = roomId;
     console.log(`${socket.username} joined room: ${roomId}`);
@@ -82,12 +84,6 @@ io.on("connection", (socket) => {
     socket.emit("connected", rooms[roomId]);
     // Broadcast to the room that a new user has joined
     socket.to(roomId).emit("userJoined", [socket.username, socket.id]);
-  });
-
-  // Handle a message sent to the room
-  socket.on("sendMessage", (roomId, message) => {
-    // Broadcast the message to the room
-    io.to(roomId).emit("receiveMessage", message);
   });
 
   // Handle user disconnect
