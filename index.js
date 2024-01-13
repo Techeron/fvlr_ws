@@ -3,9 +3,12 @@ import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import Pocketbase from "pocketbase";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
-const pb = new Pocketbase("http://localhost:8090");
+const pb = new Pocketbase(process.env.PB_URI);
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: true,
@@ -179,11 +182,11 @@ io.on("connection", (socket) => {
 
 // Connect to the Database Instance and Start up
 pb.admins
-  .authWithPassword("ws@fantasyvlr.xyz", "testtesttest")
+  .authWithPassword(process.env.PB_USERNAME, process.env.PB_PASSWORD)
   .then(() => {
     console.log("Connected to Pocketbase!");
-    server.listen(3001, () => {
-      console.log("WebSocket server listening on *:3001");
+    server.listen(process.env.PORT, () => {
+      console.log(`WebSocket server listening on *: ${process.env.PORT}`);
     });
   })
   .catch(() => {
