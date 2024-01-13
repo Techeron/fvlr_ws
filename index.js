@@ -2,8 +2,10 @@ import express from "express";
 import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
+import Pocketbase from "pocketbase";
 
 const app = express();
+const pb = new Pocketbase("http://localhost:8090");
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: true,
@@ -13,6 +15,7 @@ app.use(cors());
 
 let connections = 0;
 const rooms = {};
+const takenPlayers = {};
 /* Rooms Example
 {
   "room1": [{
@@ -21,6 +24,12 @@ const rooms = {};
     team: [],
     connected: true
   }],
+}
+*/
+const turn = {};
+/* Turn Example
+{
+  "room1": 0,
 }
 */
 io.on("connection", (socket) => {
@@ -56,8 +65,12 @@ io.on("connection", (socket) => {
           id: socket.id,
           team: [],
           connected: true,
+          admin: false,
         },
       ];
+      // Add create new TakenPlayers array
+      takenPlayers[roomId] = [];
+      turn[roomId] = 0;
     } else {
       // Check if user is already in the room
       if (rooms[roomId].find((user) => user.username === socket.username)) {
@@ -76,6 +89,7 @@ io.on("connection", (socket) => {
           id: socket.id,
           team: [],
           connected: true,
+          admin: false,
         });
       }
     }
@@ -104,8 +118,74 @@ io.on("connection", (socket) => {
     connections--;
     // You can also handle leaving the room if needed
   });
+
+  // Handle Starting the draft
+  socket.on("startDraft", () => {
+    // Verify the status of the draft
+    pb.collection("fantasyLeagues")
+      .getOne(socket.roomId)
+      .then((league) => {
+        if (league.status === "drafting") {
+          // Set the user as an admin
+          rooms[socket.roomId].forEach((user) => {
+            if (user.id === socket.id) {
+              user.admin = true;
+            }
+          });
+          // Broadcast to the room that the draft has started
+          io.to(socket.roomId).emit("draftStarted");
+          // Set the turn to the first user
+          turn[socket.roomId] = 0;
+          io.to(socket.roomId).emit(
+            "currentTurn",
+            rooms[socket.roomId][0].username
+          );
+        } else {
+          console.log("Draft is not set");
+        }
+      });
+  });
+
+  // Handle Picking a player
+  socket.on("pickPlayer", (player) => {
+    // Verify the player is still available
+    if (takenPlayers[socket.roomId].includes(player)) {
+      console.log("Player is already taken");
+      return;
+    }
+    // Check if it's the user's turn based on the websocket
+    if (rooms[socket.roomId][turn[socket.roomId]].id !== socket.id) {
+      console.log("Not your turn");
+      return;
+    }
+    // Add the player to the user's team
+    rooms[socket.roomId][turn[socket.roomId]].team.push(player);
+    // Add the player to the takenPlayers array
+    takenPlayers[socket.roomId].push(player);
+    // Broadcast to the room that the player has been picked
+    io.to(socket.roomId).emit("playerPicked", player);
+    // Increment the turn
+    turn[socket.roomId]++;
+    if (turn[socket.roomId] >= rooms[socket.roomId].length) {
+      turn[socket.roomId] = 0;
+    }
+    // Broadcast to the room the current turn
+    io.to(socket.roomId).emit(
+      "currentTurn",
+      rooms[socket.roomId][turn[socket.roomId]].username
+    );
+  });
 });
 
-server.listen(3001, () => {
-  console.log("WebSocket server listening on *:3001");
-});
+// Connect to the Database Instance and Start up
+pb.admins
+  .authWithPassword("ws@fantasyvlr.xyz", "testtesttest")
+  .then(() => {
+    console.log("Connected to Pocketbase!");
+    server.listen(3001, () => {
+      console.log("WebSocket server listening on *:3001");
+    });
+  })
+  .catch(() => {
+    console.log("Failed to connecto to Pocketbase :(");
+  });
