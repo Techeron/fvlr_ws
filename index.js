@@ -12,7 +12,6 @@ const io = new Server(server, {
 app.use(cors());
 
 let connections = 0;
-const users = [];
 const rooms = {};
 /* Rooms Example
 {
@@ -31,7 +30,6 @@ io.on("connection", (socket) => {
   // Sign in as User
   socket.on("signIn", (username) => {
     console.log(`User signed in: ${username}`);
-    users.push(username);
     socket.username = username;
     socket.emit("signedIn", username);
   });
@@ -50,13 +48,25 @@ io.on("connection", (socket) => {
 
     // Check if the room already existed, else make it a new array
     if (!rooms[roomId]) {
-      rooms[roomId] = [socket.username];
+      rooms[roomId] = [
+        {
+          username: socket.username,
+          id: socket.id,
+          team: [],
+          connected: true,
+        },
+      ];
     } else {
       // Check if user is already in the room
       if (rooms[roomId].find((user) => user.username === socket.username)) {
         console.log("User already in room");
-        socket.emit("reconnect", socket.id);
-        return;
+        rooms[roomId].forEach((user) => {
+          if (user.username === socket.username) {
+            user.connected = true;
+            user.id = socket.id;
+          }
+        });
+        socket.emit("reconnect", [socket.username, socket.id]);
       } else {
         // Add user to the room
         rooms[roomId].push({
@@ -67,6 +77,7 @@ io.on("connection", (socket) => {
         });
       }
     }
+    console.log(rooms[roomId]);
     // Tell the user everyone in the room!
     socket.emit("connected", rooms[roomId]);
     // Broadcast to the room that a new user has joined
@@ -82,6 +93,11 @@ io.on("connection", (socket) => {
   // Handle user disconnect
   socket.on("disconnect", () => {
     console.log(`User disconnected: ${socket.username}`);
+    // Verify the room exists (for debugging);
+    if (!rooms[socket.roomId]) {
+      console.log("Room does not exist");
+      return;
+    }
     io.to(socket.roomId).emit("userLeft", socket.username);
     // Set the user's connected status to false
     rooms[socket.roomId].forEach((user) => {
