@@ -18,21 +18,15 @@ app.use(cors());
 
 let connections = 0;
 const rooms = {};
-const takenPlayers = {};
 /* Rooms Example
 {
   "room1": [{
     name: "User1",
+    teamname: "Team1",
     id: "socketId1"
     team: [],
     connected: true
   }],
-}
-*/
-const turn = {};
-/* Turn Example
-{
-  "room1": 0,
 }
 */
 io.on("connection", (socket) => {
@@ -40,10 +34,24 @@ io.on("connection", (socket) => {
   connections++;
 
   // Sign in as User
-  socket.on("signIn", (username) => {
-    console.log(`User signed in: ${username}`);
-    socket.username = username;
-    socket.emit("signedIn", username);
+  socket.on("signIn", (params) => {
+    console.log(`User signed in: ${params[0]} - ${params}`);
+    socket.username = params[0];
+    socket.teamname = params[1];
+    socket.emit("signedIn", params);
+  });
+
+  // Turns
+  socket.on("getTurn", () => {
+    if (!rooms[socket.roomId]) {
+      console.log("Room does not exist");
+      return;
+    }
+    socket.emit(
+      "currentTurn",
+      // Current Room      Team Object of current turn      username
+      rooms[socket.roomId].teams[rooms[socket.roomId].turn].username
+    );
   });
 
   // Join a room
@@ -62,45 +70,47 @@ io.on("connection", (socket) => {
 
     // Check if the room already existed, else make it a new array
     if (!rooms[roomId]) {
-      rooms[roomId] = [
-        {
-          username: socket.username,
-          id: socket.id,
-          team: [],
-          connected: true,
-          admin: false,
-        },
-      ];
-      // Add create new TakenPlayers array
-      takenPlayers[roomId] = [];
-      turn[roomId] = 0;
+      rooms[roomId] = {
+        turn: 0,
+        takenPlayers: [],
+        teams: [
+          {
+            username: socket.username,
+            teamname: socket.teamname,
+            id: socket.id,
+            team: [],
+            connected: true,
+            admin: false,
+          },
+        ],
+      };
+    }
+    const user = rooms[roomId].teams.find(
+      (user) => user.username === socket.username
+    );
+    if (user) {
+      console.log("User already in room");
+      user.connected = true;
+      user.id = socket.id;
+      socket.emit("reconnect", [socket.username, socket.id]);
     } else {
-      // Check if user is already in the room
-      if (rooms[roomId].find((user) => user.username === socket.username)) {
-        console.log("User already in room");
-        rooms[roomId].forEach((user) => {
-          if (user.username === socket.username) {
-            user.connected = true;
-            user.id = socket.id;
-          }
-        });
-        socket.emit("reconnect", [socket.username, socket.id]);
-      } else {
-        // Add user to the room
-        rooms[roomId].push({
-          username: socket.username,
-          id: socket.id,
-          team: [],
-          connected: true,
-          admin: false,
-        });
-      }
+      // Add user to the room
+      rooms[roomId].teams.push({
+        username: socket.username,
+        teamname: socket.teamname,
+        id: socket.id,
+        team: [],
+        connected: true,
+        admin: false,
+      });
     }
     console.log(rooms[roomId]);
     // Tell the user everyone in the room!
     socket.emit("connected", rooms[roomId]);
     // Broadcast to the room that a new user has joined
-    socket.to(roomId).emit("userJoined", [socket.username, socket.id]);
+    socket
+      .to(roomId)
+      .emit("userJoined", [socket.username, socket.teamname, socket.id]);
   });
 
   // Handle user disconnect
@@ -113,7 +123,7 @@ io.on("connection", (socket) => {
     }
     io.to(socket.roomId).emit("userLeft", socket.username);
     // Set the user's connected status to false
-    rooms[socket.roomId].forEach((user) => {
+    rooms[socket.roomId].teams.forEach((user) => {
       if (user.id === socket.id) {
         user.connected = false;
       }
@@ -130,7 +140,7 @@ io.on("connection", (socket) => {
       .then((league) => {
         if (league.status === "drafting") {
           // Set the user as an admin
-          rooms[socket.roomId].forEach((user) => {
+          rooms[socket.roomId].teams.forEach((user) => {
             if (user.id === socket.id) {
               user.admin = true;
             }
@@ -138,10 +148,10 @@ io.on("connection", (socket) => {
           // Broadcast to the room that the draft has started
           io.to(socket.roomId).emit("draftStarted");
           // Set the turn to the first user
-          turn[socket.roomId] = 0;
+          rooms[socket.roomId].turn = 0;
           io.to(socket.roomId).emit(
             "currentTurn",
-            rooms[socket.roomId][0].username
+            rooms[socket.roomId].teams[0].username
           );
         } else {
           console.log("Draft is not set");
@@ -149,33 +159,92 @@ io.on("connection", (socket) => {
       });
   });
 
+  // Handle Player Removal
+  socket.on("removePlayer", (pid) => {
+    // Get the user from the socket.id
+    const user = rooms[socket.roomId].teams.find(
+      (user) => user.id === socket.id
+    );
+    // Remove the player from their team
+    user.team = user.team.filter((p) => p !== pid);
+    // Remove the player from the takenPlayers array
+    rooms[socket.roomId].takenPlayers = rooms[
+      socket.roomId
+    ].takenPlayers.filter((p) => p !== pid);
+    // Broadcast to the room that the player has been removed
+    io.to(socket.roomId).emit("playerRemoved", {
+      id: socket.id,
+      pid,
+    });
+  });
+
   // Handle Picking a player
   socket.on("pickPlayer", (player) => {
     // Verify the player is still available
-    if (takenPlayers[socket.roomId].includes(player)) {
+    console.log(rooms[socket.roomId].takenPlayers);
+    if (rooms[socket.roomId].takenPlayers.includes(player)) {
       console.log("Player is already taken");
       return;
     }
     // Check if it's the user's turn based on the websocket
-    if (rooms[socket.roomId][turn[socket.roomId]].id !== socket.id) {
+    else if (
+      rooms[socket.roomId].teams[rooms[socket.roomId].turn].id !== socket.id
+    ) {
       console.log("Not your turn");
       return;
     }
+
+    // Conditions below here trigger a turn change
+
+    // Check if user has already picked 5 players
+    else if (
+      rooms[socket.roomId].teams[rooms[socket.roomId].turn].team.length >= 5
+    ) {
+      console.log("You already have 5 players");
+    }
+
     // Add the player to the user's team
-    rooms[socket.roomId][turn[socket.roomId]].team.push(player);
-    // Add the player to the takenPlayers array
-    takenPlayers[socket.roomId].push(player);
-    // Broadcast to the room that the player has been picked
-    io.to(socket.roomId).emit("playerPicked", player);
+    else {
+      rooms[socket.roomId].teams[rooms[socket.roomId].turn].team.push(player);
+      // Add the player to the takenPlayers array
+      rooms[socket.roomId].takenPlayers.push(player);
+      // Broadcast to the room that the player has been picked
+      io.to(socket.roomId).emit("playerPicked", player);
+    }
+
+    const StartingTurn = Number(rooms[socket.roomId].turn);
+
     // Increment the turn
-    turn[socket.roomId]++;
-    if (turn[socket.roomId] >= rooms[socket.roomId].length) {
-      turn[socket.roomId] = 0;
+    rooms[socket.roomId].turn++;
+    if (rooms[socket.roomId].turn >= rooms[socket.roomId].teams.length) {
+      rooms[socket.roomId].turn = 0;
+    }
+    // If the next team has 5 players, itterate through
+    while (
+      rooms[socket.roomId].teams[rooms[socket.roomId].turn].team.length >= 5
+    ) {
+      rooms[socket.roomId].turn++;
+      if (rooms[socket.roomId].turn >= rooms[socket.roomId].teams.length) {
+        rooms[socket.roomId].turn = 0;
+      }
+      // If the turn has gone all the way around, break
+      if (rooms[socket.roomId].turn === StartingTurn) {
+        break;
+      }
+    }
+
+    // Broadcast to the room if draft is over
+    if (
+      rooms[socket.roomId].turn === StartingTurn &&
+      rooms[socket.roomId].teams[StartingTurn].team.length >= 5
+    ) {
+      console.log(StartingTurn + "|" + rooms[socket.roomId].turn);
+      io.to(socket.roomId).emit("draftEnded");
     }
     // Broadcast to the room the current turn
     io.to(socket.roomId).emit(
       "currentTurn",
-      rooms[socket.roomId][turn[socket.roomId]].username
+      rooms[socket.roomId].teams[rooms[socket.roomId].turn].username
     );
   });
 });
