@@ -29,6 +29,39 @@ const rooms = {};
   }],
 }
 */
+
+const nextTurn = (roomId) => {
+  const StartingTurn = Number(rooms[roomId].turn);
+  rooms[roomId].turn++;
+  if (rooms[roomId].turn >= rooms[roomId].teams.length) {
+    rooms[roomId].turn = 0;
+  }
+  // If the next team has 5 players, itterate through
+  while (
+    rooms[roomId].teams[rooms[roomId].turn].team.length >= 5 ||
+    rooms[roomId].teams[rooms[roomId].turn].teamid === ""
+  ) {
+    rooms[roomId].turn++;
+    if (rooms[roomId].turn >= rooms[roomId].teams.length) {
+      rooms[roomId].turn = 0;
+    }
+    // If the turn has gone all the way around, break
+    if (rooms[roomId].turn === StartingTurn) {
+      break;
+    }
+  }
+
+  // Broadcast to the room if draft is over
+  if (
+    rooms[roomId].turn === StartingTurn &&
+    rooms[roomId].teams[StartingTurn].team.length >= 5
+  ) {
+    return false;
+  } else {
+    return true;
+  }
+};
+
 io.on("connection", (socket) => {
   console.log("A user connected");
   connections++;
@@ -229,8 +262,8 @@ io.on("connection", (socket) => {
 
   // Handle Picking a player
   socket.on("pickPlayer", (player) => {
+    if (!rooms[socket.roomId]) return;
     // Verify the player is still available
-    console.log(rooms[socket.roomId].takenPlayers);
     if (rooms[socket.roomId].takenPlayers.includes(player)) {
       console.log("Player is already taken");
       return;
@@ -260,41 +293,19 @@ io.on("connection", (socket) => {
       // Broadcast to the room that the player has been picked
       io.to(socket.roomId).emit("playerPicked", player);
     }
-
-    const StartingTurn = Number(rooms[socket.roomId].turn);
-
-    // Increment the turn
-    rooms[socket.roomId].turn++;
-    if (rooms[socket.roomId].turn >= rooms[socket.roomId].teams.length) {
-      rooms[socket.roomId].turn = 0;
-    }
-    // If the next team has 5 players, itterate through
-    while (
-      rooms[socket.roomId].teams[rooms[socket.roomId].turn].team.length >= 5
-    ) {
-      rooms[socket.roomId].turn++;
-      if (rooms[socket.roomId].turn >= rooms[socket.roomId].teams.length) {
-        rooms[socket.roomId].turn = 0;
-      }
-      // If the turn has gone all the way around, break
-      if (rooms[socket.roomId].turn === StartingTurn) {
-        break;
-      }
-    }
+    const next = nextTurn(socket.roomId);
 
     // Broadcast to the room if draft is over
-    if (
-      rooms[socket.roomId].turn === StartingTurn &&
-      rooms[socket.roomId].teams[StartingTurn].team.length >= 5
-    ) {
-      console.log(StartingTurn + "|" + rooms[socket.roomId].turn);
+    if (!next) {
       io.to(socket.roomId).emit("draftEnded");
     }
     // Broadcast to the room the current turn
-    io.to(socket.roomId).emit(
-      "currentTurn",
-      rooms[socket.roomId].teams[rooms[socket.roomId].turn].username
-    );
+    else {
+      io.to(socket.roomId).emit(
+        "currentTurn",
+        rooms[socket.roomId].teams[rooms[socket.roomId].turn].username
+      );
+    }
   });
 });
 
