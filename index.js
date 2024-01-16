@@ -33,11 +33,18 @@ io.on("connection", (socket) => {
   console.log("A user connected");
   connections++;
 
+  // Get the user from the room object
+  const getUser = (roomId, userId) => {
+    return rooms[roomId].teams.find((user) => user.id === userId);
+  };
+
   // Sign in as User
   socket.on("signIn", (params) => {
     console.log(`User signed in: ${params[0]} - ${params}`);
     socket.username = params[0];
-    socket.teamname = params[1];
+    socket.pbid = params[1];
+    socket.teamname = params[2];
+    socket.teamId = params[3];
     socket.emit("signedIn", params);
   });
 
@@ -77,6 +84,7 @@ io.on("connection", (socket) => {
           {
             username: socket.username,
             teamname: socket.teamname,
+            teamid: socket.teamId,
             id: socket.id,
             team: [],
             connected: true,
@@ -98,12 +106,27 @@ io.on("connection", (socket) => {
       rooms[roomId].teams.push({
         username: socket.username,
         teamname: socket.teamname,
+        teamid: socket.teamId,
         id: socket.id,
         team: [],
         connected: true,
         admin: false,
       });
     }
+
+    // Admin Check (async)
+    pb.collection("fantasyLeagues")
+      .getOne(roomId)
+      .then((league) => {
+        if (league.mods.includes(socket.pbid)) {
+          console.log("User is a mod");
+          rooms[roomId].teams.forEach((user) => {
+            if (user.id === socket.id) {
+              user.admin = true;
+            }
+          });
+        }
+      });
     console.log(rooms[roomId]);
     // Tell the user everyone in the room!
     socket.emit("connected", rooms[roomId]);
@@ -139,12 +162,6 @@ io.on("connection", (socket) => {
       .getOne(socket.roomId)
       .then((league) => {
         if (league.status === "drafting") {
-          // Set the user as an admin
-          rooms[socket.roomId].teams.forEach((user) => {
-            if (user.id === socket.id) {
-              user.admin = true;
-            }
-          });
           // Broadcast to the room that the draft has started
           io.to(socket.roomId).emit("draftStarted");
           // Set the turn to the first user
@@ -156,6 +173,38 @@ io.on("connection", (socket) => {
         } else {
           console.log("Draft is not set");
         }
+      });
+  });
+
+  // Handle Submitting the Draft
+  socket.on("submitDraft", () => {
+    // Verify user is an Administrator
+    const user = getUser(socket.roomId, socket.id);
+    console.log(user);
+    if (!user.admin) {
+      console.log("User is not an admin");
+      return;
+    }
+    // Submit with no checks because I'm lazy
+    pb.collection("fantasyLeagues")
+      .update(socket.roomId, {
+        status: "active",
+      })
+      .then(() => {
+        console.log("League Updated");
+        // For every socket in the room, update their team
+        rooms[socket.roomId].teams.forEach((user) => {
+          pb.collection("fantasyTeams")
+            .update(user.teamid, {
+              players: user.team,
+            })
+            .then(() => {
+              console.log("Team Updated");
+            })
+            .catch((err) => {
+              console.log("Failed to update team: " + user.teamid);
+            });
+        });
       });
   });
 

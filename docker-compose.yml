@@ -3,7 +3,7 @@ services:
   fvlrws:
     image: fvlrws
     ports:
-      - 9091:9091
+      - 9092:9092
     networks:
       - vlr_network
     environment:
