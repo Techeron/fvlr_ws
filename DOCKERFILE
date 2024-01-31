@@ -8,6 +8,8 @@ RUN npm install
 # Copy source code
 COPY . .
 
+EXPOSE 9092
+
 # Start the app
 CMD ["npm", "start"]
 # Add your Dockerfile instructions here
