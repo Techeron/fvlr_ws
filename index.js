@@ -310,14 +310,29 @@ io.on("connection", (socket) => {
 });
 
 // Connect to the Database Instance and Start up
-pb.admins
-  .authWithPassword(process.env.PB_USERNAME, process.env.PB_PASSWORD)
-  .then(() => {
+const Login = async () => {
+  let Attempts = 0;
+  try {
+    await pb.admins.authWithPassword(
+      process.env.PB_USERNAME,
+      process.env.PB_PASSWORD
+    );
     console.log("Connected to Pocketbase!");
     server.listen(process.env.PORT, () => {
       console.log(`WebSocket server listening on *: ${process.env.PORT}`);
     });
-  })
-  .catch(() => {
+    return;
+  } catch {
     console.log("Failed to connecto to Pocketbase :(");
-  });
+    Attempts++;
+  }
+
+  if (Attempts < 5) {
+    console.log("Attempt " + Attempts + " failed. Retrying in 5 seconds...");
+    setTimeout(Login, 5000);
+  }
+
+  console.log("Failed to connecto to Pocketbase :(");
+};
+
+Login();
